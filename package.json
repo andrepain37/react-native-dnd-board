@@ -1,9 +1,11 @@
 {
   "name": "react-native-dnd-board",
-  "version": "0.0.9",
+  "version": "0.1.0",
   "description": "Drag and drop Kanban board like Trello",
-  "main": "src/index.js",
+  "main": "src/index.tsx",
+  "types": "src/index.tsx",
   "scripts": {
+    "typecheck": "tsc --noEmit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -23,7 +25,8 @@
     "kanban",
     "trello",
     "task",
-    "card"
+    "card",
+    "typescript"
   ],
   "author": {
     "name": "Hung Tran",
@@ -31,8 +34,17 @@
   },
   "license": "ISC",
   "readmeFilename": "README.md",
-  "dependencies": {
-    "react-native-gesture-handler": "^1.10.0",
-    "react-native-reanimated": "2.12.0"
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-native": ">=0.68.0",
+    "react-native-gesture-handler": ">=2.0.0",
+    "react-native-reanimated": ">=3.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-native": "^0.72.0",
+    "react-native-gesture-handler": "^2.16.0",
+    "react-native-reanimated": "^3.17.4",
+    "typescript": "^5.4.0"
   }
 }

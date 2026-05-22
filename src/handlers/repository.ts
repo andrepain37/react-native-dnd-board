@@ -2,45 +2,64 @@ import ColumnItem from './column-item';
 import RowItem from './row-item';
 import Mover from './mover';
 import Utils from '../commons/utils';
+import type { ColumnData, ItemsChanged, RowData } from '../types';
+
+type ReloadFn = () => void;
+type ListenerEvent = 'reload';
+type Listener = Partial<Record<ListenerEvent, () => void>>;
+
+interface OriginalRow {
+  id: string;
+  index: number;
+}
+
+interface OriginalColumn {
+  id: string;
+  index: number;
+  rows: OriginalRow[];
+}
 
 export default class Repository {
-  constructor(data) {
-    this.columns = {};
-    this.originalData = {};
+  columns: Record<string, ColumnItem> = {};
+  originalData: Record<string, OriginalColumn> = {};
+  listeners: Record<string, Listener> = {};
+  mover: Mover;
+  reload: ReloadFn | null = null;
 
+  constructor(data: ColumnData[]) {
     this.initialData(data);
     this.mover = new Mover();
-    this.listeners = {};
-    this.reload = null;
   }
 
-  setReload = callback => {
+  setReload = (callback: ReloadFn) => {
     this.reload = callback;
   };
 
-  addListener = (columnId, event, callback) => {
+  addListener = (columnId: string, event: ListenerEvent, callback: () => void) => {
     this.listeners[columnId] = {
       ...this.listeners[columnId],
       [event]: callback,
     };
   };
 
-  notify(columnId, event) {
-    if (this.listeners[columnId]) {
-      this.listeners[columnId][event]();
+  notify(columnId: string, event: ListenerEvent) {
+    const handler = this.listeners[columnId]?.[event];
+    if (handler) {
+      handler();
     }
   }
 
-  initialData = data => {
+  initialData = (data: ColumnData[]) => {
     data.forEach((column, columnIndex) => {
-      const rows = column.rows.map((item, index) => {
-        return new RowItem({
-          id: item.id,
-          index,
-          columnId: column.id,
-          data: item,
-        });
-      });
+      const rows = column.rows.map(
+        (item, index) =>
+          new RowItem({
+            id: item.id,
+            index,
+            columnId: column.id,
+            data: item,
+          }),
+      );
 
       this.columns[column.id] = new ColumnItem({
         id: column.id,
@@ -52,18 +71,15 @@ export default class Repository {
       this.originalData[column.id] = {
         id: column.id,
         index: columnIndex,
-        rows: rows.map(row => ({
-          id: row.id,
-          index: row.index,
-        })),
+        rows: rows.map(row => ({ id: row.id, index: row.index })),
       };
     });
   };
 
-  updateData = data => {
+  updateData = (data: ColumnData[]) => {
     data.forEach((column, columnIndex) => {
       const rows = column.rows.map((item, index) => {
-        let existingAttributes = {};
+        let existingAttributes: Partial<ConstructorParameters<typeof RowItem>[0]> = {};
 
         if (this.columns[column.id]) {
           const existingIndex = this.columns[column.id].rows.findIndex(
@@ -84,7 +100,7 @@ export default class Repository {
         });
       });
 
-      let existingColumnAttributes = {};
+      let existingColumnAttributes: Partial<ConstructorParameters<typeof ColumnItem>[0]> = {};
       if (this.columns[column.id]) {
         existingColumnAttributes = this.columns[column.id].getAttributes();
       }
@@ -99,59 +115,62 @@ export default class Repository {
       this.originalData[column.id] = {
         id: column.id,
         index: columnIndex,
-        rows: rows.map(row => ({
-          id: row.id,
-          index: row.index,
-        })),
+        rows: rows.map(row => ({ id: row.id, index: row.index })),
       };
     });
   };
 
-  addColumn = (column, index) => {
+  addColumn = (column: ColumnData, index?: number) => {
     const newColumn = new ColumnItem({
       id: column.id,
-      index: index || Object.keys(this.columns).length,
+      index: index ?? Object.keys(this.columns).length,
       data: column,
-      rows: column.rows || [],
+      rows: (column.rows as unknown as RowItem[]) ?? [],
     });
 
     this.columns[column.id] = newColumn;
-    this.originalData[column.id] = newColumn;
-
-    if (Utils.isFunction(this.reload)) {
-      this.reload();
-    }
-  };
-
-  updateColumn = (columnId, data) => {
-    this.columns[columnId] = {
-      ...this.columns[columnId],
-      ...data,
-      data,
+    this.originalData[column.id] = {
+      id: newColumn.id,
+      index: newColumn.index,
+      rows: newColumn.rows.map(r => ({ id: r.id, index: r.index })),
     };
-    this.originalData[columnId] = this.columns[columnId];
 
     if (Utils.isFunction(this.reload)) {
-      this.reload();
+      this.reload!();
     }
   };
 
-  deleteColumn = columnId => {
+  updateColumn = (columnId: string, data: ColumnData) => {
+    const existing = this.columns[columnId];
+    if (!existing) return;
+
+    existing.data = data;
+    this.originalData[columnId] = {
+      id: existing.id,
+      index: existing.index,
+      rows: existing.rows.map(r => ({ id: r.id, index: r.index })),
+    };
+
+    if (Utils.isFunction(this.reload)) {
+      this.reload!();
+    }
+  };
+
+  deleteColumn = (columnId: string) => {
     delete this.columns[columnId];
     delete this.originalData[columnId];
 
-    // Update column index
     Object.keys(this.columns).forEach((id, index) => {
       this.columns[id].index = index;
       this.originalData[id].index = index;
     });
 
     if (Utils.isFunction(this.reload)) {
-      this.reload();
+      this.reload!();
     }
   };
 
-  addRow = (columnId, data) => {
+  addRow = (columnId: string, data: RowData) => {
     const rowItem = new RowItem({
       id: data.id,
       columnId,
@@ -163,8 +182,7 @@ export default class Repository {
     this.notify(columnId, 'reload');
   };
 
-  updateRow = (rowId, data) => {
-    // Manual find index to optimize loop time
+  updateRow = (rowId: string, data: RowData) => {
     let rowIndex = -1;
     let columnId = '';
 
@@ -174,23 +192,24 @@ export default class Repository {
         columnId = column.id;
         rowIndex = i;
         return true;
-      } else {
-        return false;
       }
+      return false;
     });
 
     if (columnIndex > -1 && columnId) {
       this.columns[columnId].rows[rowIndex].data = data;
-      this.originalData[columnId].rows[rowIndex].data = data;
+      this.originalData[columnId].rows[rowIndex] = {
+        id: this.columns[columnId].rows[rowIndex].id,
+        index: this.columns[columnId].rows[rowIndex].index,
+      };
 
       if (Utils.isFunction(this.reload)) {
-        this.reload();
+        this.reload!();
       }
     }
   };
 
-  deleteRow = rowId => {
-    // Manual find index to optimize loop time
+  deleteRow = (rowId: string) => {
     let rowIndex = -1;
     let columnId = '';
 
@@ -200,9 +219,8 @@ export default class Repository {
         columnId = column.id;
         rowIndex = i;
         return true;
-      } else {
-        return false;
       }
+      return false;
     });
 
     if (columnIndex > -1 && columnId) {
@@ -210,7 +228,7 @@ export default class Repository {
       this.originalData[columnId].rows.splice(rowIndex, 1);
 
       if (Utils.isFunction(this.reload)) {
-        this.reload();
+        this.reload!();
       }
     }
   };
@@ -220,17 +238,14 @@ export default class Repository {
       this.originalData[columnId] = {
         id: this.columns[columnId].id,
         index: this.columns[columnId].index,
-        rows: this.columns[columnId].rows.map(row => ({
-          id: row.id,
-          index: row.index,
-        })),
+        rows: this.columns[columnId].rows.map(row => ({ id: row.id, index: row.index })),
       };
     });
   };
 
-  getItemsChanged = () => {
-    const columns = [];
-    const rows = [];
+  getItemsChanged = (): ItemsChanged => {
+    const columns: ItemsChanged['columns'] = [];
+    const rows: ItemsChanged['rows'] = [];
 
     Object.keys(this.originalData).forEach(columnId => {
       if (this.originalData[columnId].index !== this.columns[columnId].index) {
@@ -250,81 +265,76 @@ export default class Repository {
     return { columns, rows };
   };
 
-  getColumns = () => {
-    return Object.values(this.columns).sort((a, b) =>
-      a.index < b.index ? -1 : 1,
-    );
+  getColumns = (): ColumnItem[] => {
+    return Object.values(this.columns).sort((a, b) => (a.index < b.index ? -1 : 1));
   };
 
-  getColumnById = columnId => {
+  getColumnById = (columnId: string): ColumnItem | undefined => {
     return this.columns[columnId];
   };
 
-  getRowsByColumnId = columnId => {
+  getRowsByColumnId = (columnId: string): RowItem[] => {
     return this.columns[columnId].rows;
   };
 
-  updateColumnRef = (columnId, ref) => {
+  updateColumnRef = (columnId: string, ref: unknown) => {
     if (this.columns[columnId]) {
-      this.columns[columnId].setRef(ref);
+      this.columns[columnId].setRef(ref as never);
     }
   };
 
-  updateColumnLayout = (columnId, offset) => {
+  updateColumnLayout = (columnId: string, offset?: number) => {
     if (this.columns[columnId]) {
       this.columns[columnId].measureLayout(offset);
     }
   };
 
-  measureColumnsLayout = scrollOffset => {
+  measureColumnsLayout = (scrollOffset?: number) => {
     Object.keys(this.columns).forEach(columnId => {
       this.columns[columnId].measureLayout(scrollOffset);
     });
   };
 
-  updateRowRef = (columnId, rowId, ref) => {
+  updateRowRef = (columnId: string, rowId: string, ref: unknown) => {
     if (this.columns[columnId]) {
-      const rowIndex = this.columns[columnId].rows.findIndex(
-        row => row.id === rowId,
-      );
+      const rowIndex = this.columns[columnId].rows.findIndex(row => row.id === rowId);
       if (rowIndex > -1 && this.columns[columnId].rows[rowIndex].setRef) {
-        this.columns[columnId].rows[rowIndex].setRef(ref);
+        this.columns[columnId].rows[rowIndex].setRef(ref as never);
       }
     }
   };
 
-  updateRowLayout = (columnId, rowId) => {
-    const rowIndex = this.columns[columnId].rows.findIndex(
-      row => row.id === rowId,
-    );
+  updateRowLayout = (columnId: string, rowId: string) => {
+    const rowIndex = this.columns[columnId].rows.findIndex(row => row.id === rowId);
     if (rowIndex > -1 && this.columns[columnId].rows[rowIndex].measureLayout) {
       this.columns[columnId].rows[rowIndex].measureLayout();
     }
   };
 
-  hideRow = row => {
-    const rowIndex = this.columns[row.columnId].rows.findIndex(
-      item => item.id === row.id,
-    );
+  hideRow = (row: RowItem) => {
+    const rowIndex = this.columns[row.columnId].rows.findIndex(item => item.id === row.id);
     if (rowIndex > -1) {
       this.columns[row.columnId].rows[rowIndex].setHidden(true);
     }
   };
 
-  showRow = row => {
-    const rowIndex = this.columns[row.columnId].rows.findIndex(
-      item => item.id === row.id,
-    );
+  showRow = (row: RowItem) => {
+    const rowIndex = this.columns[row.columnId].rows.findIndex(item => item.id === row.id);
     if (rowIndex > -1) {
       this.columns[row.columnId].rows[rowIndex].setHidden(false);
     }
   };
 
-  findRow = row => {
+  findRow = (row: RowItem): RowItem | undefined => {
     return this.columns[row.columnId].rows.find(item => item.id === row.id);
   };
 
-  moveRow = (draggedRow, x, y, changeColumnCallback) => {
+  moveRow = (
+    draggedRow: RowItem,
+    x: number,
+    y: number,
+    changeColumnCallback?: (fromColumnId: string, toColumnId: string) => void,
+  ) => {
     const rowIndex = this.columns[draggedRow.columnId].rows.findIndex(
       item => item.id === draggedRow.id,
     );
@@ -333,11 +343,7 @@ export default class Repository {
       const row = this.columns[draggedRow.columnId].rows[rowIndex];
 
       const fromColumnId = row.columnId;
-      const columnAtPosition = this.mover.findColumnAtPosition(
-        this.getColumns(),
-        x,
-        y,
-      );
+      const columnAtPosition = this.mover.findColumnAtPosition(this.getColumns(), x, y);
 
       if (!columnAtPosition) {
         return;
@@ -366,21 +372,16 @@ export default class Repository {
       }
 
       if (row.hidden && !rowAtPosition.hidden) {
-        this.mover.switchItemsBetween(
-          this,
-          row.index,
-          rowAtPosition.index,
-          toColumnId,
-        );
+        this.mover.switchItemsBetween(this, row.index, rowAtPosition.index, toColumnId);
       }
 
       return columnAtPosition;
     }
   };
 
-  setColumnScrollRef = (columnId, ref) => {
+  setColumnScrollRef = (columnId: string, ref: unknown) => {
     if (this.columns[columnId]) {
-      this.columns[columnId].setScrollRef(ref);
+      this.columns[columnId].setScrollRef(ref as never);
     }
   };
 }
